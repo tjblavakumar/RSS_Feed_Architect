@@ -11,7 +11,17 @@ def get_website_nickname_from_url(url: str) -> str:
     domain = parsed.netloc
     if domain.startswith('www.'):
         domain = domain[4:]
-    return domain.replace('.', ' ').title()
+    
+    # Split by dots and take the main domain name
+    domain_parts = domain.split('.')
+    if len(domain_parts) >= 2:
+        # Take the main domain name (e.g., 'dealnews' from 'dealnews.com')
+        main_domain = domain_parts[0]
+        # Capitalize first letter and keep the rest as is
+        return main_domain.capitalize()
+    else:
+        # Fallback to the original method if domain structure is unusual
+        return domain.replace('.', ' ').title()
 
 def normalize_url(url: str) -> str:
     """Normalize URL for consistent storage."""
@@ -123,6 +133,29 @@ def main():
         transform: translateY(0px) !important;
         box-shadow: 0 3px 6px rgba(33, 150, 243, 0.3) !important;
     }
+    
+    /* Enhanced styling for clickable feed links */
+    .feed-link {
+        display: inline-block;
+        padding: 8px 12px;
+        background: linear-gradient(145deg, #E3F2FD, #BBDEFB);
+        border: 1px solid #2196F3;
+        border-radius: 6px;
+        margin: 4px 0;
+        transition: all 0.3s ease;
+    }
+    
+    .feed-link:hover {
+        background: linear-gradient(145deg, #BBDEFB, #90CAF9);
+        box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+        transform: translateY(-1px);
+    }
+    
+    .feed-link a {
+        color: #1976D2 !important;
+        text-decoration: none !important;
+        font-weight: bold !important;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -148,54 +181,86 @@ def main():
     
     # Initialize components
     db_manager = DatabaseManager()
-    rss_discovery = RSSDiscovery()
+    rss_discovery = RSSDiscovery(verbose_logging=False)  # Reduce console noise
     rss_generator = SyntheticRSSGenerator()
-    
-    def update_scan_state():
-        """Callback to update nickname from URL before form submission processing."""
-        if "scan_url" in st.session_state and "scan_nickname" in st.session_state:
-            url = st.session_state.scan_url
-            nickname = st.session_state.scan_nickname
-            
-            if url and not nickname:
-                # Try to normalize and generate nickname
-                # We do a quick check here, full validation happens in main flow
-                normalized = normalize_url(url)
-                if validators.url(normalized):
-                    st.session_state.scan_nickname = get_website_nickname_from_url(normalized)
     
     # Display content based on current page
     if st.session_state.current_page == "scan":
         # SCAN FEED PAGE
         st.header("Scan for RSS Feeds")
         
+        # Initialize session state for tracking
+        if "last_url" not in st.session_state:
+            st.session_state.last_url = ""
+        if "generated_nickname" not in st.session_state:
+            st.session_state.generated_nickname = ""
+        if "nickname_auto_generated" not in st.session_state:
+            st.session_state.nickname_auto_generated = False
+        if "trigger_autopopulate" not in st.session_state:
+            st.session_state.trigger_autopopulate = False
+        
         # Input section
-        with st.form("scan_form"):
-            # Input section
-            col1, col2 = st.columns([2, 1])
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            url_input = st.text_input(
+                "Website URL", 
+                placeholder="https://example.com",
+                key="scan_url",
+                help="Enter complete URL - nickname will auto-populate"
+            )
+        
+        # Check if we should trigger auto-population
+        # This happens when URL changes and becomes a valid complete URL
+        if url_input != st.session_state.last_url:
+            st.session_state.last_url = url_input
+            if url_input:
+                try:
+                    normalized = normalize_url(url_input)
+                    if validators.url(normalized):
+                        # URL is valid and complete
+                        generated_nickname = get_website_nickname_from_url(normalized)
+                        st.session_state.generated_nickname = generated_nickname
+                        st.session_state.nickname_auto_generated = True
+                        # Directly update the widget's session state
+                        st.session_state.scan_nickname = generated_nickname
+                except:
+                    # Invalid URL - clear auto-generated nickname if it was auto-generated
+                    if st.session_state.nickname_auto_generated:
+                        st.session_state.generated_nickname = ""
+                        st.session_state.nickname_auto_generated = False
+                        st.session_state.scan_nickname = ""
+            else:
+                # Empty URL - clear everything
+                st.session_state.generated_nickname = ""
+                st.session_state.nickname_auto_generated = False
+                st.session_state.scan_nickname = ""
+        
+        with col2:
+            # Don't use value parameter, let the widget use its own session state
+            website_nickname = st.text_input(
+                "Website Nickname", 
+                placeholder="Auto-generated from URL",
+                key="scan_nickname",
+                help="Auto-populated when you enter a complete URL"
+            )
             
-            with col1:
-                url_input = st.text_input(
-                    "Website URL", 
-                    placeholder="https://example.com",
-                    key="scan_url"
-                )
-            
-            with col2:
-                # Make nickname optional and bind to session state
-                if "scan_nickname" not in st.session_state:
-                    st.session_state.scan_nickname = ""
-                    
-                website_nickname = st.text_input(
-                    "Website Nickname", 
-                    placeholder="Auto-generated if empty",
-                    key="scan_nickname"
-                )
-            
-            # Add CSS class wrapper for the scan button
-            st.markdown('<div class="scan-button">', unsafe_allow_html=True)
-            scan_clicked = st.form_submit_button("🔍 Scan for Feeds", type="primary")
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Detect if user manually changed the nickname
+            if website_nickname != st.session_state.generated_nickname:
+                st.session_state.nickname_auto_generated = False
+            if website_nickname != st.session_state.generated_nickname:
+                st.session_state.nickname_auto_generated = False
+        
+        # Provide visual feedback about auto-population
+        if st.session_state.generated_nickname and st.session_state.nickname_auto_generated:
+            st.success(f"✨ Auto-generated nickname: '{st.session_state.generated_nickname}'")
+        elif url_input and not validators.url(normalize_url(url_input) if url_input else ""):
+            st.info("💡 Enter a complete URL (like https://example.com) to auto-generate nickname")
+        
+        # Scan button
+        st.markdown('<div class="scan-button">', unsafe_allow_html=True)
+        scan_clicked = st.button("🔍 Scan for Feeds", type="primary", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
         
         if scan_clicked:
             if not url_input:
@@ -207,9 +272,9 @@ def main():
                 if not validators.url(normalized_url_temp):
                     st.error("Please enter a valid URL")
                 else:
-                    # Get nickname (it might have been updated by the callback)
-                    current_nickname = st.session_state.scan_nickname
-                    # If somehow still empty (e.g. invalid URL during callback but valid now?), generate it
+                    # Get nickname (use the current value from the input field)
+                    current_nickname = website_nickname
+                    # If somehow still empty, generate it
                     if not current_nickname:
                         current_nickname = get_website_nickname_from_url(normalized_url_temp)
                     
@@ -262,7 +327,19 @@ def main():
             
             for i, feed in enumerate(st.session_state.discovered_feeds):
                 with st.expander(f"Feed {i+1}: {feed['title']}", expanded=True):
-                    st.code(feed['url'])
+                    # Make feed URL clickable and open in new tab with enhanced styling
+                    st.markdown(f"""
+                    <div class="feed-link">
+                        🔗 <a href="{feed['url']}" target="_blank">
+                        <strong>Test Feed:</strong> {feed['url'][:50]}{'...' if len(feed['url']) > 50 else ''} 
+                        <span style="font-size: 0.9em;">🔗 (Opens in new tab)</span>
+                        </a>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Keep code block for easy copying
+                    with st.expander("📋 Copy URL", expanded=False):
+                        st.code(feed['url'])
                     
                     # Individual save form for each feed (not nested)
                     with st.form(f"save_form_{i}"):
@@ -311,7 +388,20 @@ def main():
                         
                         with col1:
                             st.write(f"**{i}. {feed['user_given_name']}**")
-                            st.code(feed['feed_url'])
+                            # Make feed URL clickable and open in new tab with enhanced styling
+                            st.markdown(f"""
+                            <div class="feed-link">
+                                🔗 <a href="{feed['feed_url']}" target="_blank">
+                                <strong>Test Feed:</strong> {feed['feed_url'][:50]}{'...' if len(feed['feed_url']) > 50 else ''} 
+                                <span style="font-size: 0.9em;">🔗 (Opens in new tab)</span>
+                                </a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Keep code block for easy copying in a collapsible section
+                            with st.expander("📋 Copy URL", expanded=False):
+                                st.code(feed['feed_url'])
+                            
                             st.caption(f"Type: {'🤖 Synthetic' if feed['is_synthetic'] else '🔍 Discovered'} | Saved: {feed['timestamp']}")
                         
                         with col2:

@@ -5,7 +5,8 @@ from typing import List, Dict, Optional
 import re
 
 class RSSDiscovery:
-    def __init__(self):
+    def __init__(self, verbose_logging: bool = True):
+        self.verbose_logging = verbose_logging
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -46,41 +47,33 @@ class RSSDiscovery:
         
         for attempt, config in enumerate(retry_configs, 1):
             try:
-                print(f"Attempt {attempt}: Fetching {url}")
                 response = requests.get(url, **config)
                 
                 # Check for various HTTP status codes
                 if response.status_code == 200:
                     return BeautifulSoup(response.content, 'html.parser')
                 elif response.status_code == 403:
-                    print(f"403 Forbidden on attempt {attempt}")
                     if attempt < len(retry_configs):
                         time.sleep(2)  # Wait before retry
                         continue
                 elif response.status_code == 429:
-                    print(f"Rate limited on attempt {attempt}")
                     if attempt < len(retry_configs):
                         time.sleep(5)  # Wait longer for rate limits
                         continue
                 else:
-                    print(f"HTTP {response.status_code} on attempt {attempt}")
                     response.raise_for_status()
                     
             except requests.exceptions.Timeout:
-                print(f"Timeout on attempt {attempt}")
                 if attempt < len(retry_configs):
                     continue
             except requests.exceptions.ConnectionError:
-                print(f"Connection error on attempt {attempt}")
                 if attempt < len(retry_configs):
                     time.sleep(1)
                     continue
             except requests.RequestException as e:
-                print(f"Request error on attempt {attempt}: {e}")
                 if attempt < len(retry_configs):
                     continue
         
-        print(f"All attempts failed for {url}")
         return None
     
     def check_paywall(self, soup: BeautifulSoup) -> bool:
@@ -96,7 +89,6 @@ class RSSDiscovery:
         soup = self.fetch_page(url)
         if not soup:
             # If we can't fetch the main page, try pattern discovery anyway
-            print("Main page fetch failed, trying pattern discovery...")
             pattern_rss_links = self.try_common_rss_patterns(url)
             
             if pattern_rss_links:
@@ -117,6 +109,7 @@ class RSSDiscovery:
             'type': ['application/rss+xml', 'application/atom+xml']
         })
         
+        method1_count = 0
         for link in link_tags:
             href = link.get('href')
             if href:
@@ -127,13 +120,16 @@ class RSSDiscovery:
                     'title': title,
                     'type': 'discovered'
                 })
+                method1_count += 1
         
         # Method 2: Find RSS feed URLs in page content (for RSS directory pages)
         content_rss_links = self.find_rss_links_in_content(soup, url)
+        method2_count = len(content_rss_links)
         rss_links.extend(content_rss_links)
         
         # Method 3: Try common RSS URL patterns
         pattern_rss_links = self.try_common_rss_patterns(url)
+        method3_count = len(pattern_rss_links)
         rss_links.extend(pattern_rss_links)
         
         # Remove duplicates based on URL
@@ -143,6 +139,17 @@ class RSSDiscovery:
             if link['url'] not in seen_urls:
                 seen_urls.add(link['url'])
                 unique_rss_links.append(link)
+        
+        # Summary logging
+        total_found = len(unique_rss_links)
+        if self.verbose_logging:
+            if total_found > 0:
+                print(f"✅ RSS Discovery Summary: Found {total_found} unique feeds")
+                print(f"   Method 1 (HTML links): {method1_count} feeds")
+                print(f"   Method 2 (Content scan): {method2_count} feeds") 
+                print(f"   Method 3 (Pattern test): {method3_count} feeds")
+            else:
+                print("ℹ️  No RSS feeds found using any discovery method")
         
         return {'feeds': unique_rss_links, 'is_paywall': False, 'error': None}
     
@@ -181,7 +188,8 @@ class RSSDiscovery:
             '/atom'
         ]
         
-        print(f"Trying {len(common_patterns)} common RSS patterns for {base_domain}...")
+        # Only show detailed pattern testing if no feeds found by other methods
+        # This reduces console noise when traditional methods work
         
         for pattern in common_patterns:
             test_url = base_domain + pattern
@@ -208,13 +216,11 @@ class RSSDiscovery:
                             'title': title,
                             'type': 'pattern-discovered'
                         })
-                        print(f"✓ Found RSS feed: {test_url}")
                     
             except requests.RequestException:
                 # Silently continue to next pattern
                 continue
         
-        print(f"Pattern discovery found {len(rss_links)} feeds")
         return rss_links
     
     def generate_pattern_title(self, pattern: str, domain: str) -> str:
