@@ -1,7 +1,6 @@
 import streamlit as st
 from db_manager import DatabaseManager
 from rss_discovery import RSSDiscovery
-from synthetic_rss import SyntheticRSSGenerator
 from urllib.parse import urlparse
 import validators
 
@@ -182,7 +181,6 @@ def main():
     # Initialize components
     db_manager = DatabaseManager()
     rss_discovery = RSSDiscovery(verbose_logging=False)  # Reduce console noise
-    rss_generator = SyntheticRSSGenerator()
     
     # Display content based on current page
     if st.session_state.current_page == "scan":
